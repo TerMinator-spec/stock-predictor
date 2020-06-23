@@ -1,0 +1,127 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Jun 20 17:47:39 2020
+
+@author: Aman
+"""
+
+import pandas as pd
+import numpy as np
+
+prices=pd.read_csv("prices.csv")
+data=prices.groupby("symbol")
+
+pred_dict={}
+mse_dict={}
+for name, group in data:
+    stock=pd.DataFrame(group)
+
+    
+    
+    #adding moving averages
+    stock["moving_avg_7"]=stock["close"].rolling(7).mean()
+    stock["moving_avg_20"]=stock["close"].rolling(20).mean()
+    stock["moving_avg_50"]=stock["close"].rolling(50).mean()
+    stock["moving_avg_100"]=stock["close"].rolling(100).mean()
+    stock["moving_avg_200"]=stock["close"].rolling(200).mean()
+    
+    #adding bollinger bands
+    stock["average"]=stock["close"].rolling(14).mean()
+    stock["std14"]=stock["close"].rolling(14).std()
+    stock["upperband"]=stock["average"]+2*stock["std14"]
+    stock["lowerband"]=stock["average"]-2*stock["std14"]
+    
+    stock=stock.dropna()
+    
+    close=np.array(stock["close"])
+    close=np.reshape(close,(-1,1))
+    
+    
+    #scaling the data
+    from sklearn.preprocessing import MinMaxScaler
+    sc = MinMaxScaler(feature_range = (0, 1))
+    close_scaled = sc.fit_transform(close)
+    
+    other=stock.drop("close",axis=1)
+    sc2=MinMaxScaler(feature_range = (0, 1))
+    other_scaled=sc2.fit_transform(other.iloc[:,2:])
+    
+    
+    #adding volume and close into a single numpy array
+    imp=np.concatenate((close_scaled,other_scaled),axis=1)
+    
+    
+    # Creating a data structure with 60 timesteps and 1 output
+    
+    X = []
+    y = []
+    
+    
+    for i in range(60, len(close)):
+        X.append(imp[i-60:i,:])
+        y.append(imp[i, 0])
+    
+    
+    X, y = np.array(X), np.array(y)
+    #splitting into training set and test set
+    
+    lentest=int(0.3*len(close))
+    X_train=X[:len(close)-lentest]
+    X_test=X[len(close)-lentest:]
+    y_train=y[:len(close)-lentest]
+    y_test=y[len(close)-lentest:]
+    
+    date=stock["date"][len(close)-lentest:]
+    
+    # Reshaping
+    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 14))
+    
+    # Importing the Keras libraries and packages
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Dense
+    from tensorflow.keras.layers import LSTM
+    from tensorflow.keras.layers import Dropout
+    
+    # Initialising the RNN
+    regressor = Sequential()
+    
+    # Adding the first LSTM layer and some Dropout regularisation
+    regressor.add(LSTM(units = 30, return_sequences = True, input_shape = (X_train.shape[1], 14)))
+    regressor.add(Dropout(0.2))
+    
+    # Adding a second LSTM layer and some Dropout regularisation
+    regressor.add(LSTM(units = 30, return_sequences = True))
+    regressor.add(Dropout(0.2))
+    
+    # Adding a third LSTM layer and some Dropout regularisation
+    regressor.add(LSTM(units = 30, return_sequences = True))
+    regressor.add(Dropout(0.2))
+    
+    # Adding a fourth LSTM layer and some Dropout regularisation
+    regressor.add(LSTM(units = 30))
+    regressor.add(Dropout(0.2))
+    
+    # Adding the output layer
+    regressor.add(Dense(units = 1))
+    
+    # Compiling the RNN
+    regressor.compile(optimizer = 'adam', loss = 'mean_squared_error')
+    
+    # Fitting the RNN to the Training set
+    regressor.fit(X_train, y_train, epochs = 100, batch_size = 25)
+    
+    pred=regressor.predict(X_test)
+    
+    pred=sc.inverse_transform(pred)
+    y_test=sc.inverse_transform(np.reshape(y_test,(-1,1)))
+    from sklearn.metrics import mean_squared_error
+    mse=mean_squared_error(y_test,pred)
+    mse_dict[name]=mse
+    pred=pred.flatten()
+    pred_dict[name+"_date"]=date.tolist()
+    pred_dict[name]=pred.tolist()
+    
+    #All the stock price prediction for the next day has been added to the pred_dict dictionary
+    #all the mean squared error for a given stock has been added to mse_dict dictionary
+  
+               
